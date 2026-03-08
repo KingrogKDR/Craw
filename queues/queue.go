@@ -127,7 +127,7 @@ func (q *Queue) CompleteJob(job *Job, result *Result, workerID string) error {
 		} else {
 			job.RetryCount++
 
-			job.BaseScore -= 10
+			job.BaseScore -= max(10, job.RetryCount*10)
 
 			if job.BaseScore < 0 {
 				job.BaseScore = 10

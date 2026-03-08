@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net/http"
 	"sync"
 	"time"
 
@@ -44,22 +43,12 @@ func NewWorker(frontier *queues.Queue, queues []string, concurrency int) *Worker
 	}
 }
 
-func FetchReq(ctx context.Context, rawUrl string) error {
-	client := &http.Client{}
-
-	request, err := http.NewRequestWithContext(ctx, "GET", rawUrl, nil)
-	if err != nil {
-		return fmt.Errorf("Error while creating request %s", rawUrl)
-	}
-	request.Header.Set("User-Agent", UserAgent)
-
-	resp, err := client.Do(request)
-	if err != nil {
-		return fmt.Errorf("Error fetching request for %s", rawUrl)
-	}
-
-	defer resp.Body.Close()
-
+func ProcessJob(ctx context.Context, job *queues.Job) error {
+	// get robots.txt
+	// save robots and domain metadata
+	// then fetch url
+	// hash the url, check for duplication
+	// if not duplicate, store the raw html with the hash name and compressed form, update url metadata
 	return nil
 }
 
@@ -122,7 +111,7 @@ func (w *Worker) processTask(job *queues.Job) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- FetchReq(ctx, job.URL)
+		done <- ProcessJob(ctx, job)
 	}()
 
 	var err error
