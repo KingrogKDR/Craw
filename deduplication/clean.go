@@ -11,7 +11,26 @@ import (
 	"github.com/yuin/goldmark/text"
 )
 
-func ExtractCanonicalHtml(html string) (string, error) {
+type SourceType string
+
+const (
+	SourceHTML = "html"
+	SourceMD   = "md"
+)
+
+func CleanData(data string, t SourceType) (string, error) {
+	switch t {
+	case SourceHTML:
+		return cleanHtml(data)
+	case SourceMD:
+		md := cleanMarkdown(data)
+		return md, nil
+	}
+
+	return "", nil
+}
+
+func cleanHtml(html string) (string, error) {
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
 	if err != nil {
 		return "", err
@@ -54,7 +73,7 @@ func ExtractCanonicalHtml(html string) (string, error) {
 var badgeRegex = regexp.MustCompile(`!\[.*?\]\(.*?shields\.io.*?\)`)
 var imageRegex = regexp.MustCompile(`!\[.*?\]\(.*?\)`)
 
-func ExtractCanonicalMarkdown(md string) string {
+func cleanMarkdown(md string) string {
 	md = badgeRegex.ReplaceAllString(md, "") // removes badges from md
 	md = imageRegex.ReplaceAllString(md, "") // removes images from md
 
@@ -94,25 +113,16 @@ func ExtractCanonicalMarkdown(md string) string {
 
 			builder.Add("text", strings.TrimSpace(buf.String()))
 
-		case *ast.FencedCodeBlock:
+		case *ast.ListItem:
 			var buf bytes.Buffer
 
-			for i := 0; i < node.Lines().Len(); i++ {
-				line := node.Lines().At(i)
-				buf.Write(line.Value(source))
+			for c := node.FirstChild(); c != nil; c = c.NextSibling() {
+				if textNode, ok := c.(*ast.Text); ok {
+					buf.Write(textNode.Segment.Value(source))
+				}
 			}
 
-			builder.Add("code", strings.TrimSpace(buf.String()))
-
-		case *ast.CodeBlock:
-			var buf bytes.Buffer
-
-			for i := 0; i < node.Lines().Len(); i++ {
-				line := node.Lines().At(i)
-				buf.Write(line.Value(source))
-			}
-
-			builder.Add("code", strings.TrimSpace(buf.String()))
+			builder.Add("list", strings.TrimSpace(buf.String()))
 
 		case *ast.Link:
 			dest := string(node.Destination)
