@@ -11,7 +11,6 @@ import (
 
 // GitPipeline : force https, strip .git, strip auth info(@git, user:pass), keep fragments only if they look like numbers(eg #L10), preserve path case, remove trailing slashes
 // Docs Pipeline : path insensitive, do not strip query params like v=1.2 or path segments like /v2/, keep fragments, Normalize Locales: normalize site.com/en-us/doc and site.com/fr-fr/doc to a single canonical version site.com/doc, keep trailing slashes
-// Forum Pipeline : path insensitive, keep fragments for answer ids only, strip slugs and only keep ids of questions, strip everything except tab (e.g., ?tab=active vs ?tab=votes can be useful for different views). remove trailing slashes
 // General Pipeline : lowercase everything, remove all params, strip index.html or default.aspx., remove trailing slashes
 
 // The Universal Base (Applied to ALL URLs)
@@ -56,7 +55,6 @@ func (p *NormalizationPipeline) Run(u *url.URL) {
 type BaseNormalizer struct{}
 type GitNormalizer struct{}
 type DocsNormalizer struct{}
-type ForumNormalizer struct{}
 type GeneralNormalizer struct{}
 
 func normalizeIPv4(host string) string {
@@ -137,47 +135,6 @@ func (n DocsNormalizer) Normalize(u *url.URL) {
 	if !strings.HasSuffix(u.Path, "/") && !strings.Contains(path.Base(u.Path), ".") {
 		u.Path += "/"
 	}
-}
-
-var rxIsNumeric = regexp.MustCompile(`^\d+$`)
-var rxStartsNumeric = regexp.MustCompile(`^\d+`)
-
-func (n ForumNormalizer) Normalize(u *url.URL) {
-	u.Path = strings.ToLower(u.Path)
-	if !rxIsNumeric.MatchString(u.Fragment) {
-		u.Fragment = ""
-	}
-
-	segments := strings.Split(u.Path, "/")
-	var cleanedSegments []string
-
-	for _, seg := range segments {
-		if seg == "" {
-			continue
-		}
-		if rxStartsNumeric.MatchString(seg) {
-			idOnly := rxIsNumeric.FindString(seg)
-			cleanedSegments = append(cleanedSegments, idOnly)
-			break
-		}
-
-		cleanedSegments = append(cleanedSegments, seg)
-	}
-
-	u.Path = "/" + strings.Join(cleanedSegments, "/")
-	u.Path = path.Clean(u.Path)
-
-	u.Path = strings.TrimRight(u.Path, "/")
-
-	q := u.Query()
-
-	tab := q.Get("tab")
-	newQuery := url.Values{}
-	if tab != "" {
-		newQuery.Set("tab", tab)
-	}
-	u.RawQuery = newQuery.Encode()
-
 }
 
 func (n GeneralNormalizer) Normalize(u *url.URL) {

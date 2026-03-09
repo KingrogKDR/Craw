@@ -13,20 +13,9 @@ func isGitHost(host string) bool {
 		host == "bitbucket.org"
 }
 
-func isForumHost(host string) bool {
-	return host == "stackoverflow.com" ||
-		strings.HasSuffix(host, ".stackexchange.com") ||
-		host == "reddit.com" ||
-		strings.HasPrefix(host, "forum.") ||
-		strings.HasPrefix(host, "forums.")
-}
-
 func getPipeline(host string, path string) Normalizer {
 	if isGitHost(host) {
 		return GitNormalizer{}
-	}
-	if isForumHost(host) {
-		return ForumNormalizer{}
 	}
 	docKeywords := []string{"/docs/", "/doc/", "/api/", "/reference/", "/guide/", "/documentation/"}
 	for _, key := range docKeywords {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/url"
 	"sync"
 	"time"
 
@@ -44,10 +45,54 @@ func NewWorker(frontier *queues.Queue, queues []string, concurrency int) *Worker
 }
 
 func ProcessJob(ctx context.Context, job *queues.Job) error {
-	// get robots.txt
-	// save robots and domain metadata
-	// then fetch url
-	// hash the url, check for duplication
+	parsed, err := url.Parse(job.URL)
+	if err != nil {
+		return fmt.Errorf("Parsing url in processing job: %w", err)
+	}
+
+	domain := parsed.Hostname()
+	rawUrl := parsed.String()
+
+	meta, err := GetDomainMetadata(ctx, domain, parsed.Scheme)
+
+	if domain == "github.com" {
+		return ProcessGithubRepo(ctx, parsed, meta)
+	}
+
+	if err != nil {
+		return fmt.Errorf("Unable to get domain meta: %w", err)
+	}
+
+	isPathAllowed, err := IsAllowedByRobots(ctx, meta, rawUrl)
+
+	if err != nil {
+		return fmt.Errorf("Path blocked by robots: %w", err)
+	}
+
+	if !isPathAllowed {
+		return nil
+	}
+
+	isDomainAllowed, err := CheckDomainRateLimit(meta)
+
+	if err != nil {
+		return fmt.Errorf("Domain blocked by rate limit: %w", err)
+	}
+
+	if !isDomainAllowed {
+		return nil
+	}
+
+	resp, err := FetchReq(ctx, rawUrl)
+
+	if err != nil {
+		return fmt.Errorf("Can't fetch from %s: %w", rawUrl, err)
+	}
+	defer resp.Body.Close()
+
+	UpdateDomainAccess(ctx, domain, meta)
+
+	// hash the content, check for duplication
 	// if not duplicate, store the raw html with the hash name and compressed form, update url metadata
 	return nil
 }

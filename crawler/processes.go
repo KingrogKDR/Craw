@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/KingrogKDR/Dev-Search/storage"
@@ -149,4 +150,36 @@ func FetchReq(ctx context.Context, rawUrl string) (*http.Response, error) {
 	}
 
 	return resp, nil
+}
+
+func ProcessGithubRepo(ctx context.Context, parsed *url.URL, meta *DomainMeta) error {
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+
+	if len(parts) < 2 {
+		return fmt.Errorf("Invalid repo url")
+	}
+
+	owner := parts[0]
+	repo := parts[1]
+
+	api := fmt.Sprintf(
+		"https://api.github.com/repos/%s/%s/readme",
+		owner,
+		repo,
+	)
+
+	resp, err := FetchReq(ctx, api)
+
+	if err != nil {
+		return fmt.Errorf("Can't fetch repo from %s: %w", api, err)
+	}
+	defer resp.Body.Close()
+
+	UpdateDomainAccess(ctx, parsed.Host, meta)
+
+	// decode base64
+	// hash for deduplication
+	// store markdown in hash.md.gz form in s3
+
+	return nil
 }
