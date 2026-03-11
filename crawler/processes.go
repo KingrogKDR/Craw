@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/KingrogKDR/Dev-Search/deduplication"
+	"github.com/KingrogKDR/Dev-Search/queues"
 	"github.com/KingrogKDR/Dev-Search/storage"
 	"github.com/redis/go-redis/v9"
 	"github.com/temoto/robotstxt"
@@ -161,7 +162,7 @@ type githubReadme struct {
 	Encoding string `json:"encoding"`
 }
 
-func ProcessGithubRepo(ctx context.Context, parsed *url.URL, meta *DomainMeta, simIndex *deduplication.SimhashIndex, store *storage.MinioStore) error {
+func ProcessGithubRepo(ctx context.Context, parsed *url.URL, meta *DomainMeta, simIndex *deduplication.SimhashIndex, store *storage.MinioStore, parseQ *queues.Queue) error {
 
 	repoURL := parsed.String()
 	log.Printf("[GitHub] Processing repo URL: %s", repoURL)
@@ -249,12 +250,35 @@ func ProcessGithubRepo(ctx context.Context, parsed *url.URL, meta *DomainMeta, s
 	simIndex.Add(hash)
 	log.Printf("[GitHub] Repo README unique. Storing to MinIO (hash=%d)", hash)
 
-	err = store.StoreData(ctx, body, repoURL, "github", hash)
+	objectKey, err := store.StoreData(ctx, body, repoURL, "github", hash)
 	if err != nil {
 		return fmt.Errorf("Can't store markdown: %w", err)
 	}
 
 	log.Printf("[GitHub] Stored README successfully for repo: %s/%s", owner, repo)
+
+	parseJob := queues.NewJob(repoURL)
+
+	parseMetaKey := fmt.Sprintf("parsemeta:%s", parseJob.ID)
+
+	parseMeta := map[string]interface{}{
+		"url":        repoURL,
+		"object_key": objectKey,
+		"type":       "md",
+		"hash":       hash,
+	}
+
+	err = parseQ.Redis.HSet(ctx, parseMetaKey, parseMeta).Err()
+	if err != nil {
+		return fmt.Errorf("failed storing parse metadata: %w", err)
+	}
+
+	err = parseQ.Enqueue(parseJob)
+	if err != nil {
+		return fmt.Errorf("failed to enqueue parse job: %w", err)
+	}
+
+	log.Printf("[Github] Parse job queued for: %s", repoURL)
 
 	return nil
 }

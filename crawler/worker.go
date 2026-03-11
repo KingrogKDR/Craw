@@ -2,6 +2,7 @@ package crawler
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/KingrogKDR/Dev-Search/deduplication"
 	"github.com/KingrogKDR/Dev-Search/internal/stats"
+	"github.com/KingrogKDR/Dev-Search/parsing"
 	"github.com/KingrogKDR/Dev-Search/queues"
 	"github.com/KingrogKDR/Dev-Search/storage"
 	"github.com/google/uuid"
@@ -24,6 +26,8 @@ const (
 type Worker struct {
 	ID       string
 	frontier *queues.Queue
+	parseQ   *queues.Queue
+
 	queues   []string
 	simIndex *deduplication.SimhashIndex
 	store    *storage.MinioStore
@@ -36,12 +40,13 @@ type Worker struct {
 	timeout     time.Duration
 }
 
-func NewWorker(frontier *queues.Queue, queues []string, concurrency int, simIndex *deduplication.SimhashIndex, store *storage.MinioStore) *Worker {
+func NewWorker(frontier *queues.Queue, parseQ *queues.Queue, queues []string, concurrency int, simIndex *deduplication.SimhashIndex, store *storage.MinioStore) *Worker {
 	ctx, cancel := context.WithCancel(context.Background())
 	workerID := fmt.Sprintf("%s-%s", UserAgent, uuid.New().String())
 	return &Worker{
 		ID:          workerID,
 		frontier:    frontier,
+		parseQ:      parseQ,
 		queues:      queues,
 		simIndex:    simIndex,
 		store:       store,
@@ -69,11 +74,6 @@ func (w *Worker) ProcessJob(ctx context.Context, job *queues.Job) error {
 		return fmt.Errorf("Unable to get domain meta: %w", err)
 	}
 
-	if domain == "github.com" {
-		log.Printf("[Worker %s] Detected GitHub repo URL: %s", w.ID, rawUrl)
-		return ProcessGithubRepo(ctx, parsed, meta, w.simIndex, w.store)
-	}
-
 	isPathAllowed, err := IsAllowedByRobots(ctx, meta, rawUrl)
 
 	if err != nil {
@@ -95,6 +95,12 @@ func (w *Worker) ProcessJob(ctx context.Context, job *queues.Job) error {
 		log.Printf("[Worker %s] Rate limited domain: %s", w.ID, domain)
 		return nil
 	}
+
+	if domain == "github.com" {
+		log.Printf("[Worker %s] Detected GitHub repo URL: %s", w.ID, rawUrl)
+		return ProcessGithubRepo(ctx, parsed, meta, w.simIndex, w.store, w.parseQ)
+	}
+
 	log.Printf("[Worker %s] Fetching URL: %s", w.ID, rawUrl)
 	resp, err := FetchReq(ctx, rawUrl)
 
@@ -140,12 +146,38 @@ func (w *Worker) ProcessJob(ctx context.Context, job *queues.Job) error {
 
 	log.Printf("[Worker %s] Page unique. Storing to MinIO (hash=%d)", w.ID, hash)
 
-	err = w.store.StoreData(ctx, body, job.URL, "html", hash)
+	objectKey, err := w.store.StoreData(ctx, body, job.URL, "html", hash)
 	if err != nil {
 		return fmt.Errorf("Can't store html: %w", err)
 	}
 
 	log.Printf("[Worker %s] Stored page successfully: %s", w.ID, job.URL)
+
+	parseJob := queues.NewJob(job.URL)
+
+	parseMeta := map[string]interface{}{
+		"url":        job.URL,
+		"object_key": objectKey,
+		"type":       "html",
+		"hash":       hash,
+	}
+
+	parseJson, err := json.Marshal(parseMeta)
+	if err != nil {
+		return err
+	}
+
+	err = w.parseQ.Redis.HSet(ctx, parsing.ParseQueueKey, parseJob.ID, parseJson).Err()
+	if err != nil {
+		return fmt.Errorf("failed storing parse metadata: %w", err)
+	}
+
+	err = w.parseQ.Enqueue(parseJob)
+	if err != nil {
+		return fmt.Errorf("failed to enqueue parse job: %w", err)
+	}
+
+	log.Printf("[Worker %s] Parse job queued for: %s", w.ID, job.URL)
 
 	return nil
 }

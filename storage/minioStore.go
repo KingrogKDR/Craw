@@ -56,7 +56,7 @@ func (m *MinioStore) EnsureBucket(ctx context.Context) error {
 	return nil
 }
 
-func (m *MinioStore) StoreData(ctx context.Context, raw []byte, url string, source string, hash uint64) error {
+func (m *MinioStore) StoreData(ctx context.Context, raw []byte, url string, source string, hash uint64) (string, error) {
 	var contentPath string
 	var contentType string
 
@@ -75,7 +75,7 @@ func (m *MinioStore) StoreData(ctx context.Context, raw []byte, url string, sour
 	)
 
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	meta := PageMeta{
@@ -91,7 +91,7 @@ func (m *MinioStore) StoreData(ctx context.Context, raw []byte, url string, sour
 		ContentType: "application/json",
 	})
 
-	return err
+	return contentPath, err
 }
 
 func (m *MinioStore) GetObject(ctx context.Context, objectName string) ([]byte, error) {

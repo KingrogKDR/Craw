@@ -38,6 +38,7 @@ var Store *storage.MinioStore
 func main() {
 	rdb := storage.GetRedisClient()
 	frontier := queues.NewQueue(rdb, "frontierqueue")
+	parseQ := queues.NewQueue(rdb, "parsequeue")
 
 	simIndex := deduplication.NewSimIndex()
 
@@ -70,7 +71,7 @@ func main() {
 		time.Sleep(100 * time.Millisecond)
 
 	}
-	worker := crawler.NewWorker(frontier, priorityQueues, 2, simIndex, store)
+	worker := crawler.NewWorker(frontier, parseQ, priorityQueues, 2, simIndex, store)
 
 	go func() {
 		ticker := time.NewTicker(10 * time.Second)
