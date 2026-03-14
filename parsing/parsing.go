@@ -11,6 +11,7 @@ import (
 	"github.com/KingrogKDR/Dev-Search/normalizer"
 	"github.com/KingrogKDR/Dev-Search/queues"
 	"github.com/KingrogKDR/Dev-Search/storage"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/go-shiori/go-readability"
@@ -28,6 +29,16 @@ type ParsedPage struct {
 	Text          string
 	Links         []string
 	HasCodeBlocks bool
+}
+
+type DocumentRecord struct {
+	URL           string `json:"url"`
+	Hash          uint64 `json:"hash"`
+	TextKey       string `json:"text_key"`
+	RawKey        string `json:"raw_key"`
+	Depth         int    `json:"depth"`
+	InboundLinks  int    `json:"inbound_links"`
+	HasCodeBlocks bool   `json:"has_code_blocks"`
 }
 
 func NewParsePayload(objectKey string, hash uint64, typ string) *ParsePayload {
@@ -78,41 +89,54 @@ func ExtractTextAndStore(ctx context.Context, job *queues.Job, store *storage.Mi
 
 	if currentMeta == nil {
 		log.Printf("[Parser] Warning: no existing metadata found for %s, creating fresh...", job.URL)
-		queues.ClassifyURL(parsed, currentMeta)
 		currentMeta = queues.NewUrlMeta(0)
+		queues.ClassifyURL(parsed, currentMeta)
+	}
+	currentMeta.HasCodeBlocks = parsedPage.HasCodeBlocks
+
+	doc := DocumentRecord{
+		URL:           job.URL,
+		Hash:          payload.Hash,
+		TextKey:       fmt.Sprintf("text/%d", payload.Hash),
+		RawKey:        payload.ObjectKey,
+		Depth:         currentMeta.Depth,
+		InboundLinks:  currentMeta.InboundLinks,
+		HasCodeBlocks: currentMeta.HasCodeBlocks,
+	}
+
+	docBytes, err := json.Marshal(doc)
+	if err != nil {
+		log.Printf("failed to marshal document record: %v", err)
+	}
+
+	if err := store.StoreDocumentRecord(ctx, docBytes, doc.Hash); err != nil {
+		log.Printf("[Parser] failed storing document record: %v", err)
 	}
 
 	nextDepth := currentMeta.Depth + 1
-	currentMeta.HasCodeBlocks = parsedPage.HasCodeBlocks
+
+	canonical, err := extractCanonicalURL(string(rawData))
+	if err != nil {
+		log.Printf("[Parser] canonical extraction failed: %v", err)
+	}
 
 	for _, u := range parsedPage.Links {
-		normalizedUrl, err := normalizePageURL(u, string(rawData))
+
+		normalizedUrl, err := normalizePageURL(u, canonical)
 		if err != nil {
 			log.Printf("[Parser] Skipping URL %s, normalization failed: %v", u, err)
 			continue
 		}
+
 		metaKey := fmt.Sprintf(UrlMetaKey, normalizedUrl)
-		// check for duplication
-		exists, err := frontier.Redis.Exists(ctx, metaKey).Result()
-		if err != nil {
-			log.Printf("[Parser] Redis exists check failed for %s: %v", normalizedUrl, err)
-			continue
-		}
-		discoveredUrlMeta, err := getUrlMeta(ctx, normalizedUrl)
-		if err != nil {
-			log.Printf("[Parser] can't get url meta for %s: %v", normalizedUrl, err)
-			continue
-		}
 
-		if exists > 0 {
-			discoveredUrlMeta.InboundLinks++
-			continue
-		}
-		// create default url metadata for the unique urls
 		urlParsed, err := url.Parse(normalizedUrl)
+		if err != nil {
+			continue
+		}
 
+		// create metadata for the discovered URL
 		newUrlMeta := queues.NewUrlMeta(nextDepth)
-
 		queues.ClassifyURL(urlParsed, newUrlMeta)
 
 		metaBytes, err := json.Marshal(newUrlMeta)
@@ -121,17 +145,39 @@ func ExtractTextAndStore(ctx context.Context, job *queues.Job, store *storage.Mi
 			continue
 		}
 
-		err = frontier.Redis.Set(ctx, metaKey, metaBytes, 0).Err()
+		// atomic deduplication
+		added, err := frontier.Redis.SetNX(ctx, metaKey, metaBytes, 0).Result()
 		if err != nil {
 			log.Printf("[Parser] metadata store failed: %v", err)
 			continue
 		}
 
-		// enqueue these new urls to the frontier
+		// URL already discovered
+		if !added {
+
+			existingMeta, err := getUrlMeta(ctx, normalizedUrl)
+			if err != nil || existingMeta == nil {
+				continue
+			}
+
+			existingMeta.InboundLinks++
+
+			updatedBytes, err := json.Marshal(existingMeta)
+			if err != nil {
+				continue
+			}
+
+			frontier.Redis.Set(ctx, metaKey, updatedBytes, 0)
+
+			continue
+		}
+
+		// new URL → enqueue
 		job := queues.NewJob(normalizedUrl)
 		job.BaseScore = queues.ScoreDevURL(newUrlMeta)
+
 		if err := frontier.Enqueue(job); err != nil {
-			log.Printf("Failed to enqueue job: %v", err)
+			log.Printf("[Parser] Failed to enqueue job: %v", err)
 		}
 	}
 	return nil
@@ -369,23 +415,15 @@ func extractCanonicalURL(rawHTML string) (string, error) {
 	return strings.TrimSpace(canonical), nil
 }
 
-func normalizePageURL(rawURL string, rawHtml string) (string, error) {
-	canonical, err := extractCanonicalURL(rawHtml)
-	if err != nil {
-		return "", err
-	}
-	base, _ := url.Parse(rawURL)
-	canonParsed, _ := url.Parse(canonical)
-
-	resoled := base.ResolveReference(canonParsed)
-
-	canonical = resoled.String()
-
-	// prefer canonical url if available
+func normalizePageURL(rawURL string, canonical string) (string, error) {
 	if canonical != "" {
-		return normalizer.RunNormalizationPipeline(canonical)
+		base, _ := url.Parse(rawURL)
+		canonParsed, err := url.Parse(canonical)
+		if err == nil {
+			resolved := base.ResolveReference(canonParsed)
+			return normalizer.RunNormalizationPipeline(resolved.String())
+		}
 	}
-
 	return normalizer.RunNormalizationPipeline(rawURL)
 }
 
@@ -395,6 +433,10 @@ func getUrlMeta(ctx context.Context, currentUrl string) (*queues.UrlMeta, error)
 
 	data, err := rdb.Get(ctx, key).Bytes()
 
+	if err == redis.Nil {
+		return nil, nil
+	}
+
 	if err != nil {
 		return nil, err
 	}
@@ -403,5 +445,6 @@ func getUrlMeta(ctx context.Context, currentUrl string) (*queues.UrlMeta, error)
 	if err := json.Unmarshal(data, &meta); err != nil {
 		return nil, err
 	}
+
 	return &meta, nil
 }

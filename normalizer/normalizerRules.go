@@ -9,31 +9,6 @@ import (
 	"strings"
 )
 
-// GitPipeline : force https, strip .git, strip auth info(@git, user:pass), keep fragments only if they look like numbers(eg #L10), preserve path case, remove trailing slashes
-// Docs Pipeline : path insensitive, do not strip query params like v=1.2 or path segments like /v2/, keep fragments, Normalize Locales: normalize site.com/en-us/doc and site.com/fr-fr/doc to a single canonical version site.com/doc, keep trailing slashes
-
-// The Universal Base (Applied to ALL URLs)
-
-// These fix protocol and syntax errors that are never functionally necessary.
-
-//     Protocol: Lowercase (e.g., HTTP → http).
-
-//     Host: Lowercase (e.g., GITHUB.com → github.com).
-
-//     Port: Remove default ports (:80, :443).
-
-//     IP Address: Standardize format. // need to look into it more
-
-//     Path: Resolve dot segments (/a/b/../c → /a/c).
-
-//     Path: Collapse duplicate slashes (// → /).
-
-// 	   trim www.
-
-//     Query: Strip tracking parameters (utm_*, fbclid, ref).
-
-//     Query: Sort parameters alphabetically.
-
 var defaultHttpPort = "80"
 var defaultHttpsPort = "443"
 
@@ -111,7 +86,23 @@ func (n BaseNormalizer) Normalize(u *url.URL) {
 var rxGitExtension = regexp.MustCompile(`(?i)\.git/?$`)
 var rxGitFragment = regexp.MustCompile(`^(L?\d+(-L?\d+)?)$`)
 
+var bannedGitPaths = []string{
+	"/issues",
+	"/pulls",
+	"/actions",
+	"/projects",
+	"/graphs",
+	"/stargazers",
+	"/network",
+}
+
 func (n GitNormalizer) Normalize(u *url.URL) {
+
+	for _, p := range bannedGitPaths {
+		if strings.Contains(u.Path, p) {
+			u.Path = ""
+		}
+	}
 	u.Scheme = "https"
 	u.User = nil
 	u.Path = rxGitExtension.ReplaceAllString(u.Path, "")
@@ -130,7 +121,15 @@ func (n DocsNormalizer) Normalize(u *url.URL) {
 		u.Path = rxLocalePrefix.ReplaceAllString(u.Path, "/")
 	}
 	u.Path = strings.ToLower(u.Path)
+	for _, idx := range []string{"index.html", "index.htm", "index.md"} {
+		if p, ok := strings.CutSuffix(u.Path, idx); ok {
+			u.Path = p
+			break
+		}
+	}
 	if !strings.HasSuffix(u.Path, "/") && !strings.Contains(path.Base(u.Path), ".") {
 		u.Path += "/"
 	}
+
+	u.RawQuery = ""
 }

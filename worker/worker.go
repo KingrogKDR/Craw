@@ -2,18 +2,20 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
 	"time"
 
+	"github.com/KingrogKDR/Dev-Search/crawler"
 	"github.com/KingrogKDR/Dev-Search/internal/stats"
 	"github.com/KingrogKDR/Dev-Search/queues"
 	"github.com/google/uuid"
 )
 
 const (
-	TaskTimeout = 30 * time.Second
+	TaskTimeout = 120 * time.Second
 )
 
 type ExecFunc func(ctx context.Context, job *queues.Job) error
@@ -120,16 +122,19 @@ func (w *Worker) processTask(job *queues.Job) {
 	duration := time.Since(start)
 
 	success := err == nil
+	retryLater := false
 
 	var errorMsg string
 	if err != nil {
+		if errors.Is(err, crawler.ErrRateLimited) {
+			retryLater = true
+		}
 		errorMsg = err.Error()
 	}
-	w.completeTask(job, success, errorMsg, duration)
+	w.completeTask(job, success, retryLater, errorMsg, duration)
 }
 
-func (w *Worker) completeTask(job *queues.Job, success bool, errorMsg string, duration time.Duration) {
-	stats.Increment()
+func (w *Worker) completeTask(job *queues.Job, success bool, retryLater bool, errorMsg string, duration time.Duration) {
 	result := &queues.Result{
 		JobID:      job.ID,
 		Success:    success,
@@ -140,8 +145,19 @@ func (w *Worker) completeTask(job *queues.Job, success bool, errorMsg string, du
 	}
 
 	if success {
+		stats.IncrementProcessed()
 		log.Printf("Worker %s: Finished job %s in %v success=%v", w.ID, job.URL, duration, success)
+	} else if retryLater {
+		log.Printf(
+			"Worker %s: Rate limited for %s, requeuing",
+			w.ID, job.URL,
+		)
+
+		if err := w.queue.RequeueWithDelay(job, 2*time.Second); err != nil {
+			log.Printf("Worker %s: Requeue error: %v", w.ID, err)
+		}
 	} else {
+		stats.IncrementError()
 		log.Printf("Worker %s: Job %s for %s failed: %s (attempt %d/%d)",
 			w.ID, job.ID, job.URL, errorMsg, job.RetryCount+1, queues.MAX_RETRIES+1)
 	}

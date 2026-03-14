@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/KingrogKDR/Dev-Search/deduplication"
+	"github.com/KingrogKDR/Dev-Search/internal/stats"
 	"github.com/KingrogKDR/Dev-Search/parsing"
 	"github.com/KingrogKDR/Dev-Search/queues"
 	"github.com/KingrogKDR/Dev-Search/storage"
@@ -34,6 +36,7 @@ const (
 )
 
 var domainMetaGroup singleflight.Group
+var ErrRateLimited = errors.New("rate limited")
 
 func FetchAndStoreRaw(ctx context.Context, job *queues.Job, simIndex *deduplication.SimhashIndex, store *storage.MinioStore, parseQ *queues.Queue) error {
 	log.Printf("[Crawler] Starting job for URL: %s", job.URL)
@@ -52,7 +55,7 @@ func FetchAndStoreRaw(ctx context.Context, job *queues.Job, simIndex *deduplicat
 		return fmt.Errorf("Unable to get domain meta: %w", err)
 	}
 
-	isPathAllowed, err := isAllowedByRobots(ctx, meta, rawUrl)
+	isPathAllowed, err := isAllowedByRobots(meta, rawUrl)
 
 	if err != nil {
 		return fmt.Errorf("Robots error: %w", err)
@@ -70,8 +73,7 @@ func FetchAndStoreRaw(ctx context.Context, job *queues.Job, simIndex *deduplicat
 	}
 
 	if !isDomainAllowed {
-		log.Printf("[Crawler] Rate limited domain: %s", domain)
-		return nil
+		return ErrRateLimited
 	}
 
 	if domain == "github.com" {
@@ -80,11 +82,16 @@ func FetchAndStoreRaw(ctx context.Context, job *queues.Job, simIndex *deduplicat
 	}
 
 	log.Printf("[Crawler] Fetching URL: %s", rawUrl)
+	startFetch := time.Now()
+
 	resp, err := fetchReq(ctx, rawUrl)
 
 	if err != nil {
 		return fmt.Errorf("Can't fetch from %s: %w", rawUrl, err)
 	}
+
+	stats.AddFetchLatency(time.Since(startFetch))
+
 	defer resp.Body.Close()
 
 	updateDomainAccess(ctx, domain, meta)
@@ -94,6 +101,8 @@ func FetchAndStoreRaw(ctx context.Context, job *queues.Job, simIndex *deduplicat
 	if err != nil {
 		return fmt.Errorf("Can't read response body: %w", err)
 	}
+
+	stats.AddBytes(int64(len(body)))
 
 	log.Printf("[Crawler] Fetched %d bytes from %s", len(body), rawUrl)
 
@@ -116,20 +125,22 @@ func FetchAndStoreRaw(ctx context.Context, job *queues.Job, simIndex *deduplicat
 	isDup := simIndex.IsNearDuplicate(hash, deduplication.MaxHammingDist)
 
 	if isDup {
+		stats.IncrementDuplicate()
 		log.Printf("[Crawler] Duplicate page detected: %s (hash=%d)", job.URL, hash)
 		return nil
 	}
 
-	log.Printf("[Crawler] Page unique. Storing to MinIO (hash=%d)", hash)
+	contentHash := deduplication.ComputeHash(cleanedText)
+	log.Printf("[Crawler] Page unique. Storing to MinIO (hash=%d)", contentHash)
 
-	objectKey, err := store.StoreRawData(ctx, body, job.URL, "html", hash)
+	objectKey, err := store.StoreRawData(ctx, body, job.URL, "html", contentHash)
 	if err != nil {
 		return fmt.Errorf("Can't store html: %w", err)
 	}
 
 	log.Printf("[Crawler] Stored page successfully: %s", job.URL)
 
-	parsePayload := parsing.NewParsePayload(objectKey, hash, "html")
+	parsePayload := parsing.NewParsePayload(objectKey, contentHash, "html")
 
 	payloadBytes, err := json.Marshal(parsePayload)
 
@@ -238,7 +249,7 @@ func getDomainMetadata(ctx context.Context, domain string, scheme string) (*Doma
 	return v.(*DomainMeta), nil
 }
 
-func isAllowedByRobots(ctx context.Context, meta *DomainMeta, rawUrl string) (bool, error) {
+func isAllowedByRobots(meta *DomainMeta, rawUrl string) (bool, error) {
 	parsed, err := url.Parse(rawUrl)
 	if err != nil {
 		return false, fmt.Errorf("invalid url: %w", err)
@@ -364,16 +375,18 @@ func processGithubRepo(ctx context.Context, parsed *url.URL, meta *DomainMeta, s
 		return nil
 	}
 
-	log.Printf("[GitHub] Repo README unique. Storing to MinIO (hash=%d)", hash)
+	contentHash := deduplication.ComputeHash(cleanedText)
 
-	objectKey, err := store.StoreRawData(ctx, body, repoURL, "github", hash)
+	log.Printf("[GitHub] Repo README unique. Storing to MinIO (hash=%d)", contentHash)
+
+	objectKey, err := store.StoreRawData(ctx, body, repoURL, "github", contentHash)
 	if err != nil {
 		return fmt.Errorf("Can't store markdown: %w", err)
 	}
 
 	log.Printf("[GitHub] Stored README successfully for repo: %s/%s", owner, repo)
 
-	parsePayload := parsing.NewParsePayload(objectKey, hash, "html")
+	parsePayload := parsing.NewParsePayload(objectKey, contentHash, "md")
 
 	payloadBytes, err := json.Marshal(parsePayload)
 

@@ -11,6 +11,7 @@ import (
 	"github.com/KingrogKDR/Dev-Search/crawler"
 	"github.com/KingrogKDR/Dev-Search/deduplication"
 	"github.com/KingrogKDR/Dev-Search/internal/stats"
+	"github.com/KingrogKDR/Dev-Search/parsing"
 	"github.com/KingrogKDR/Dev-Search/queues"
 	"github.com/KingrogKDR/Dev-Search/storage"
 	"github.com/KingrogKDR/Dev-Search/worker"
@@ -25,13 +26,15 @@ var priorityQueues = []string{
 
 var seedUrls = []string{
 	"https://go.dev/doc/",
-	"https://go.dev/doc/effective_go",
+	"https://doc.rust-lang.org/book/",
+	"https://docs.python.org/3/",
 	"https://developer.mozilla.org/en-US/docs/Web/JavaScript",
-	"https://docs.docker.com/get-started/",
-	"https://github.com/golang/go",
+	"https://docs.docker.com/",
+	"https://kubernetes.io/docs/",
+	"https://redis.io/docs/",
 	"https://github.com/donnemartin/system-design-primer",
 	"https://github.com/codecrafters-io/build-your-own-x",
-	"https://golang.org/doc/effective_go",
+	"https://github.com/public-apis/public-apis",
 }
 
 var Store *storage.MinioStore
@@ -57,7 +60,7 @@ func main() {
 
 	err = store.EnsureBucket(context.Background())
 	if err != nil {
-		log.Fatal("Bucket doesn't exist in s3: %w", err)
+		log.Fatal("Bucket doesn't exist in s3:", err)
 	}
 
 	for _, u := range seedUrls {
@@ -77,7 +80,12 @@ func main() {
 		return crawler.FetchAndStoreRaw(ctx, job, simIndex, store, parseQ)
 	}
 
-	crawlerWorker := worker.NewWorker(crawler.UserAgent, frontier, priorityQueues, 2, crawlExec)
+	parseExec := func(ctx context.Context, job *queues.Job) error {
+		return parsing.ExtractTextAndStore(ctx, job, store, frontier)
+	}
+
+	crawlerWorker := worker.NewWorker(crawler.UserAgent, frontier, priorityQueues, 8, crawlExec)
+	parserWorker := worker.NewWorker("Parser", parseQ, priorityQueues, 6, parseExec)
 
 	go func() {
 		ticker := time.NewTicker(10 * time.Second)
@@ -91,22 +99,26 @@ func main() {
 	}()
 
 	go func() {
-
-		ticker := time.NewTicker(5 * time.Second)
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
 
 		for range ticker.C {
-			stats.Report()
+			if err := parseQ.ProcessRetryJobs(); err != nil {
+				log.Printf("Error processing retry jobs: %v", err)
+			}
 		}
-
 	}()
 
 	crawlerWorker.Start()
+	parserWorker.Start()
 
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	<-c
 
 	log.Println("Shutting down worker...")
+	parserWorker.Stop()
 	crawlerWorker.Stop()
 
+	stats.FinalReport()
 }

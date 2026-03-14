@@ -6,10 +6,6 @@ import (
 	"time"
 )
 
-// depth, inboundLinks, hascodeblocks -> parser update
-// isDocs, isApi, HasQueryParams, Isblog -> check during the time of new meta creation,
-// isRecrawl -> updated during retry
-
 type UrlMeta struct {
 	Depth          int       `json:"depth"`
 	HasQueryParams bool      `json:"has_query_params"`
@@ -18,7 +14,6 @@ type UrlMeta struct {
 	HasCodeBlocks  bool      `json:"has_code_blocks"`
 	InboundLinks   int       `json:"inbound_links"`
 	IsBlog         bool      `json:"is_blog"`
-	IsRecrawl      bool      `json:"is_recrawl"`
 	FirstSeenAt    time.Time `json:"first_seen_at"`
 }
 
@@ -31,7 +26,6 @@ func NewUrlMeta(depth int) *UrlMeta {
 		HasCodeBlocks:  false,
 		InboundLinks:   0,
 		IsBlog:         false,
-		IsRecrawl:      false,
 		FirstSeenAt:    time.Now(),
 	}
 }
@@ -90,10 +84,6 @@ func ScoreDevURL(u *UrlMeta) int {
 
 	if u.IsBlog {
 		score -= 15
-	}
-
-	if u.IsRecrawl {
-		score -= 25
 	}
 
 	return score

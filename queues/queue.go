@@ -65,6 +65,23 @@ func (q *Queue) Enqueue(job *Job) error {
 	return nil
 }
 
+func (q *Queue) RequeueWithDelay(job *Job, delay time.Duration) error {
+
+	job.RetryCount++
+
+	data, err := json.Marshal(job)
+	if err != nil {
+		return err
+	}
+
+	retryTime := time.Now().Add(delay).Unix()
+
+	return q.Redis.ZAdd(q.ctx, RetryKey, redis.Z{
+		Score:  float64(retryTime),
+		Member: data,
+	}).Err()
+}
+
 func (q *Queue) Dequeue(queues []string, workerID string, timeout time.Duration) (*Job, error) {
 	queueKeys := make([]string, len(queues))
 	for i, queue := range queues {

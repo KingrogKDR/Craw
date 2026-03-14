@@ -3,10 +3,8 @@ package storage
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
-	"time"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -15,13 +13,6 @@ import (
 type MinioStore struct {
 	Client *minio.Client
 	Bucket string
-}
-
-type PageMeta struct {
-	URL       string `json:"url"`
-	Type      string `json:"type"`
-	Simhash   uint64 `json:"simhash"`
-	Timestamp int64  `json:"timestamp"`
 }
 
 func NewMinioStore(endpoint, username, password, bucket string, useSSL bool) (*MinioStore, error) {
@@ -78,20 +69,7 @@ func (m *MinioStore) StoreRawData(ctx context.Context, raw []byte, url string, t
 		return "", err
 	}
 
-	meta := PageMeta{
-		URL:       url,
-		Type:      typ,
-		Simhash:   hash,
-		Timestamp: time.Now().Unix(),
-	}
-	metaBytes, _ := json.Marshal(meta)
-	metaPath := fmt.Sprintf("page-meta/%d.json", hash)
-
-	_, err = m.Client.PutObject(ctx, m.Bucket, metaPath, bytes.NewReader(metaBytes), int64(len(metaBytes)), minio.PutObjectOptions{
-		ContentType: "application/json",
-	})
-
-	return contentPath, err
+	return contentPath, nil
 }
 
 func (m *MinioStore) StoreTextData(ctx context.Context, text string, hash uint64) error {
@@ -101,11 +79,27 @@ func (m *MinioStore) StoreTextData(ctx context.Context, text string, hash uint64
 	_, err := m.Client.PutObject(ctx, m.Bucket, contentPath, bytes.NewReader(textBytes), int64(len(text)), minio.PutObjectOptions{
 		ContentType: "text",
 	})
-	if err != nil {
-		return err
-	}
 
-	return nil
+	return err
+}
+
+func (m *MinioStore) StoreDocumentRecord(ctx context.Context, docData []byte, docHash uint64) error {
+
+	objectKey := fmt.Sprintf("docs/%d.json", docHash)
+
+	reader := bytes.NewReader(docData)
+
+	_, err := m.Client.PutObject(
+		ctx,
+		m.Bucket,
+		objectKey,
+		reader,
+		int64(len(docData)),
+		minio.PutObjectOptions{
+			ContentType: "application/json",
+		},
+	)
+	return err
 }
 
 func (m *MinioStore) GetObject(ctx context.Context, objectName string) ([]byte, error) {
