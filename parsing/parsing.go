@@ -54,16 +54,26 @@ const (
 )
 
 func ExtractTextAndStore(ctx context.Context, job *queues.Job, store *storage.MinioStore, frontier *queues.Queue) error {
+	if job.Type != string(queues.JOB_PARSE) {
+		return nil
+	}
+
 	log.Printf("[Parser] Starting job for URL: %s", job.URL)
+
+	if len(job.Payload) == 0 {
+		return fmt.Errorf("parser received empty payload for %s", job.URL)
+	}
+
 	parsed, err := url.Parse(job.URL)
 	if err != nil {
 		return fmt.Errorf("failed parsing url: %w", err)
 	}
-
-	payloadBytes := job.Payload
 	var payload ParsePayload
-	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
+	if err := json.Unmarshal(job.Payload, &payload); err != nil {
 		return fmt.Errorf("failed unmarshaling parse payload: %w", err)
+	}
+	if payload.ObjectKey == "" {
+		return fmt.Errorf("invalid payload: missing object key")
 	}
 
 	rawData, err := store.GetObject(ctx, payload.ObjectKey)
@@ -106,7 +116,7 @@ func ExtractTextAndStore(ctx context.Context, job *queues.Job, store *storage.Mi
 
 	docBytes, err := json.Marshal(doc)
 	if err != nil {
-		log.Printf("failed to marshal document record: %v", err)
+		return fmt.Errorf("failed to marshal document record: %w", err)
 	}
 
 	if err := store.StoreDocumentRecord(ctx, docBytes, doc.Hash); err != nil {
@@ -132,6 +142,10 @@ func ExtractTextAndStore(ctx context.Context, job *queues.Job, store *storage.Mi
 
 		urlParsed, err := url.Parse(normalizedUrl)
 		if err != nil {
+			continue
+		}
+
+		if urlParsed.Hostname() == "" {
 			continue
 		}
 
@@ -173,10 +187,11 @@ func ExtractTextAndStore(ctx context.Context, job *queues.Job, store *storage.Mi
 		}
 
 		// new URL → enqueue
-		job := queues.NewJob(normalizedUrl)
-		job.BaseScore = queues.ScoreDevURL(newUrlMeta)
+		crawlJob := queues.NewJob(normalizedUrl)
+		crawlJob.Type = string(queues.JOB_CRAWL)
+		crawlJob.BaseScore = queues.ScoreDevURL(newUrlMeta)
 
-		if err := frontier.Enqueue(job); err != nil {
+		if err := frontier.Enqueue(crawlJob); err != nil {
 			log.Printf("[Parser] Failed to enqueue job: %v", err)
 		}
 	}

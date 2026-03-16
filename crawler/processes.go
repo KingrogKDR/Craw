@@ -17,6 +17,7 @@ import (
 	"github.com/KingrogKDR/Dev-Search/internal/stats"
 	"github.com/KingrogKDR/Dev-Search/parsing"
 	"github.com/KingrogKDR/Dev-Search/queues"
+	"github.com/KingrogKDR/Dev-Search/scripts"
 	"github.com/KingrogKDR/Dev-Search/storage"
 	"github.com/redis/go-redis/v9"
 	"github.com/temoto/robotstxt"
@@ -72,38 +73,22 @@ func FetchAndStoreRaw(ctx context.Context, job *queues.Job, simIndex *deduplicat
 	}
 
 	if wait > 0 {
-		log.Printf("[Crawler] Rate limit wait %s for %s", wait, domain)
-
-		select {
-		case <-time.After(wait):
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+		return fmt.Errorf("%w:%d", ErrRateLimited, wait.Milliseconds())
 	}
-
 	if domain == "github.com" {
 		log.Printf("[Crawler] Detected GitHub repo URL: %s", rawUrl)
-		return processGithubRepo(ctx, parsed, meta, simIndex, store, parseQ)
+		return processGithubRepo(ctx, parsed, simIndex, store, parseQ)
 	}
 
 	log.Printf("[Crawler] Fetching URL: %s", rawUrl)
 	startFetch := time.Now()
 
-	resp, err := fetchReq(ctx, rawUrl)
+	body, err := fetchReq(ctx, rawUrl)
 
 	if err != nil {
-		return fmt.Errorf("Can't fetch from %s: %w", rawUrl, err)
+		return fmt.Errorf("Can't fetch from %s: can't read response body: %w", rawUrl, err)
 	}
-
 	stats.AddFetchLatency(time.Since(startFetch))
-
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-
-	if err != nil {
-		return fmt.Errorf("Can't read response body: %w", err)
-	}
 
 	stats.AddBytes(int64(len(body)))
 
@@ -141,6 +126,10 @@ func FetchAndStoreRaw(ctx context.Context, job *queues.Job, simIndex *deduplicat
 		return fmt.Errorf("Can't store html: %w", err)
 	}
 
+	if objectKey == "" {
+		return fmt.Errorf("store returned empty objectKey for %s", job.URL)
+	}
+
 	log.Printf("[Crawler] Stored page successfully: %s", job.URL)
 
 	parsePayload := parsing.NewParsePayload(objectKey, contentHash, "html")
@@ -151,9 +140,14 @@ func FetchAndStoreRaw(ctx context.Context, job *queues.Job, simIndex *deduplicat
 		return fmt.Errorf("failed marshaling parse payload: %w", err)
 	}
 
-	parseJob := queues.NewJob(job.URL)
-	parseJob.Payload = payloadBytes
+	if len(payloadBytes) == 0 {
+		return fmt.Errorf("empty parse payload for %s", job.URL)
+	}
 
+	parseJob := queues.NewJob(job.URL)
+	parseJob.Type = string(queues.JOB_PARSE)
+	parseJob.Payload = payloadBytes
+	log.Printf("[Crawler] Parse payload: key=%s hash=%d", objectKey, contentHash)
 	err = parseQ.Enqueue(parseJob)
 	if err != nil {
 		return fmt.Errorf("failed to enqueue parse job: %w", err)
@@ -165,29 +159,25 @@ func FetchAndStoreRaw(ctx context.Context, job *queues.Job, simIndex *deduplicat
 }
 
 func reserveDomainAccess(ctx context.Context, domain string, meta *DomainMeta) (time.Duration, error) {
-	now := time.Now()
 
-	wait := time.Duration(0)
+	key := fmt.Sprintf("ratelimit:%s", domain)
 
-	if now.Before(meta.NextAllowedTime) {
-		wait = meta.NextAllowedTime.Sub(now)
-	}
+	now := time.Now().UnixMilli()
+	delay := max(meta.CrawlDelay, 5*time.Second)
 
-	meta.NextAllowedTime = now.Add(wait + meta.CrawlDelay)
+	wait, err := scripts.RateLimitScript.Run(
+		ctx,
+		storage.GetRedisClient(),
+		[]string{key},
+		now,
+		delay,
+	).Int64()
 
-	data, err := json.Marshal(meta)
 	if err != nil {
 		return 0, err
 	}
 
-	key := fmt.Sprintf(DomainMetaKey, domain)
-
-	err = storage.GetRedisClient().Set(ctx, key, data, 24*time.Hour).Err()
-	if err != nil {
-		return 0, err
-	}
-
-	return wait, nil
+	return time.Duration(wait) * time.Millisecond, nil
 }
 
 func getDomainMetadata(ctx context.Context, domain string, scheme string) (*DomainMeta, error) {
@@ -208,25 +198,17 @@ func getDomainMetadata(ctx context.Context, domain string, scheme string) (*Doma
 		return nil, err
 	}
 
-	v, err, _ := domainMetaGroup.Do(domain, func() (interface{}, error) {
+	v, err, _ := domainMetaGroup.Do(domain, func() (any, error) {
 		robotsUrl := fmt.Sprintf("%s://%s/robots.txt", scheme, domain)
 
-		robotsResp, err := fetchReq(ctx, robotsUrl)
-
-		if err != nil {
-			return nil, err
-		}
-
-		defer robotsResp.Body.Close()
-
-		body, err := io.ReadAll(robotsResp.Body)
+		body, err := fetchRobots(ctx, robotsUrl)
 		if err != nil {
 			return nil, err
 		}
 
 		robots, _ := robotstxt.FromBytes(body)
 
-		delay := time.Second
+		delay := 5 * time.Second
 
 		if robots != nil {
 			group := robots.FindGroup(UserAgent)
@@ -261,6 +243,22 @@ func getDomainMetadata(ctx context.Context, domain string, scheme string) (*Doma
 	return v.(*DomainMeta), nil
 }
 
+func fetchRobots(ctx context.Context, robotsURL string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", robotsURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := robotsClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	defer resp.Body.Close()
+
+	return io.ReadAll(resp.Body)
+}
+
 func isAllowedByRobots(meta *DomainMeta, rawUrl string) (bool, error) {
 	parsed, err := url.Parse(rawUrl)
 	if err != nil {
@@ -282,19 +280,19 @@ func isAllowedByRobots(meta *DomainMeta, rawUrl string) (bool, error) {
 	return group.Test(parsed.Path), nil
 }
 
-func fetchReq(ctx context.Context, rawUrl string) (*http.Response, error) {
+func fetchReq(ctx context.Context, rawUrl string) ([]byte, error) {
 	request, err := http.NewRequestWithContext(ctx, "GET", rawUrl, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating request for %s: %w", rawUrl, err)
 	}
 	request.Header.Set("User-Agent", UserAgent)
 
-	resp, err := CrawlerClient.Do(request)
+	resp, err := crawlerClient.Do(request)
 	if err != nil {
 		return nil, fmt.Errorf("Error fetching request for %s: %w", rawUrl, err)
 	}
-
-	return resp, nil
+	defer resp.Body.Close()
+	return io.ReadAll(resp.Body)
 }
 
 type githubReadme struct {
@@ -302,7 +300,7 @@ type githubReadme struct {
 	Encoding string `json:"encoding"`
 }
 
-func processGithubRepo(ctx context.Context, parsed *url.URL, meta *DomainMeta, simIndex *deduplication.SimhashIndex, store *storage.MinioStore, parseQ *queues.Queue) error {
+func processGithubRepo(ctx context.Context, parsed *url.URL, simIndex *deduplication.SimhashIndex, store *storage.MinioStore, parseQ *queues.Queue) error {
 
 	repoURL := parsed.String()
 	log.Printf("[GitHub] Processing repo URL: %s", repoURL)
@@ -328,17 +326,10 @@ func processGithubRepo(ctx context.Context, parsed *url.URL, meta *DomainMeta, s
 
 	log.Printf("[GitHub] Fetching README via API: %s", api)
 
-	resp, err := fetchReq(ctx, api)
+	body, err := fetchReq(ctx, api)
 
 	if err != nil {
-		return fmt.Errorf("Can't fetch repo from %s: %w", api, err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-
-	if err != nil {
-		return fmt.Errorf("Can't read response body: %w", err)
+		return fmt.Errorf("Can't fetch repo from %s: can't read response body: %w", api, err)
 	}
 
 	log.Printf("[GitHub] Fetched from %s, size: %d bytes", repoURL, len(body))
@@ -405,7 +396,12 @@ func processGithubRepo(ctx context.Context, parsed *url.URL, meta *DomainMeta, s
 	}
 
 	parseJob := queues.NewJob(repoURL)
+	parseJob.Type = string(queues.JOB_PARSE)
 	parseJob.Payload = payloadBytes
+
+	if len(parseJob.Payload) == 0 {
+		return fmt.Errorf("missing payload for job %s", parseJob.ID)
+	}
 
 	err = parseQ.Enqueue(parseJob)
 	if err != nil {

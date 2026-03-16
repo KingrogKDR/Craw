@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,7 +17,7 @@ import (
 )
 
 const (
-	TaskTimeout = 60 * time.Second
+	TaskTimeout = 5 * time.Minute
 )
 
 type ExecFunc func(ctx context.Context, job *queues.Job) error
@@ -52,7 +54,21 @@ func NewWorker(workerName string, queue *queues.Queue, queues []string, concurre
 
 func (w *Worker) Start() {
 	log.Printf("Worker %s starting with %d concurrent processors", w.ID, w.concurrency)
-
+	// start processing reaper in the background
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		for {
+			select {
+			case <-w.ctx.Done():
+				return
+			case <-ticker.C:
+				err := w.queue.ReapStaleProcessingJobs(w.ID)
+				if err != nil {
+					log.Printf("Worker %s: reaper error: %v", w.ID, err)
+				}
+			}
+		}
+	}()
 	for i := 0; i < w.concurrency; i++ {
 		w.wg.Add(1)
 		go w.processTasks()
@@ -129,6 +145,9 @@ func (w *Worker) processTask(job *queues.Job) {
 		if errors.Is(err, crawler.ErrRateLimited) {
 			retryLater = true
 		}
+		if strings.HasPrefix(err.Error(), crawler.ErrRateLimited.Error()) {
+			retryLater = true
+		}
 		errorMsg = err.Error()
 	}
 	w.completeTask(job, success, retryLater, errorMsg, duration)
@@ -152,8 +171,18 @@ func (w *Worker) completeTask(job *queues.Job, success bool, retryLater bool, er
 			"Worker %s: Rate limited for %s, requeuing",
 			w.ID, job.URL,
 		)
+		delay := time.Second * time.Duration(1<<job.RetryCount)
 
-		if err := w.queue.RequeueWithDelay(job, 2*time.Second); err != nil {
+		if strings.Contains(errorMsg, ":") {
+			parts := strings.Split(errorMsg, ":")
+			if len(parts) == 2 {
+				if ms, err := strconv.Atoi(parts[1]); err == nil {
+					delay = time.Duration(ms) * time.Millisecond
+				}
+			}
+		}
+
+		if err := w.queue.RequeueWithDelay(job, delay); err != nil {
 			log.Printf("Worker %s: Requeue error: %v", w.ID, err)
 		}
 	} else {

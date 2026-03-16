@@ -65,6 +65,7 @@ func main() {
 
 	for _, u := range seedUrls {
 		job := queues.NewJob(u)
+		job.Type = string(queues.JOB_CRAWL)
 
 		job.BaseScore += 100
 

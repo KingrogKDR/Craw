@@ -9,6 +9,7 @@ import (
 
 type PriorityStatus string
 type JobStatus string
+type JobType string
 
 const (
 	P0_CRITICAL PriorityStatus = "critical"
@@ -23,6 +24,10 @@ const (
 	JOB_DONE     JobStatus = "done"
 	JOB_DEAD     JobStatus = "dead"
 )
+const (
+	JOB_CRAWL JobType = "crawl"
+	JOB_PARSE JobType = "parse"
+)
 
 const MAX_RETRIES = 5
 const DEFAULT_RETRY_DELAY = 10 * time.Second
@@ -30,7 +35,8 @@ const DEFAULT_RETRY_DELAY = 10 * time.Second
 type Job struct {
 	ID              string          `json:"id"`
 	URL             string          `json:"url"`
-	Payload         json.RawMessage `json:"payload,omitempty"`
+	Type            string          `json:"type"`
+	Payload         json.RawMessage `json:"payload"`
 	Status          JobStatus       `json:"status"`
 	Priority        PriorityStatus  `json:"priority"`
 	RetryCount      int             `json:"retry_count"`
@@ -47,6 +53,7 @@ func NewJob(rawUrl string) *Job {
 		URL:        rawUrl,
 		Status:     JOB_READY,
 		RetryCount: 0,
+		BaseScore:  10,
 		CreatedAt:  time.Now(),
 	}
 }
