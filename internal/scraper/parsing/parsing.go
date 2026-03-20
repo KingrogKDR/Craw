@@ -8,9 +8,11 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/KingrogKDR/Dev-Search/internal/indexer"
 	"github.com/KingrogKDR/Dev-Search/internal/scraper/normalizer"
 	"github.com/KingrogKDR/Dev-Search/internal/scraper/queues"
 	"github.com/KingrogKDR/Dev-Search/internal/storage"
+	"github.com/KingrogKDR/Dev-Search/internal/streams"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/PuerkitoBio/goquery"
@@ -31,16 +33,6 @@ type ParsedPage struct {
 	HasCodeBlocks bool
 }
 
-type DocumentRecord struct {
-	URL           string `json:"url"`
-	Hash          uint64 `json:"hash"`
-	TextKey       string `json:"text_key"`
-	RawKey        string `json:"raw_key"`
-	Depth         int    `json:"depth"`
-	InboundLinks  int    `json:"inbound_links"`
-	HasCodeBlocks bool   `json:"has_code_blocks"`
-}
-
 func NewParsePayload(objectKey string, hash uint64, typ string) *ParsePayload {
 	return &ParsePayload{
 		ObjectKey: objectKey,
@@ -51,9 +43,10 @@ func NewParsePayload(objectKey string, hash uint64, typ string) *ParsePayload {
 
 const (
 	UrlMetaKey = "urlmeta:%s"
+	StreamName = "parser"
 )
 
-func ExtractTextAndStore(ctx context.Context, job *queues.Job, store *storage.MinioStore, frontier *queues.Queue) error {
+func ExtractTextAndStore(ctx context.Context, job *queues.Job, store *storage.MinioStore, frontier *queues.Queue, parseStream *streams.MsgStream) error {
 	if job.Type != string(queues.JOB_PARSE) {
 		return nil
 	}
@@ -104,24 +97,16 @@ func ExtractTextAndStore(ctx context.Context, job *queues.Job, store *storage.Mi
 	}
 	currentMeta.HasCodeBlocks = parsedPage.HasCodeBlocks
 
-	doc := DocumentRecord{
-		URL:           job.URL,
-		Hash:          payload.Hash,
-		TextKey:       fmt.Sprintf("text/%d", payload.Hash),
-		RawKey:        payload.ObjectKey,
-		Depth:         currentMeta.Depth,
-		InboundLinks:  currentMeta.InboundLinks,
-		HasCodeBlocks: currentMeta.HasCodeBlocks,
-	}
+	record := indexer.NewRecord(payload.Hash, job.URL, parsedPage.Text, currentMeta.InboundLinks)
 
-	docBytes, err := json.Marshal(doc)
+	recordBytes, err := json.Marshal(record)
 	if err != nil {
-		return fmt.Errorf("failed to marshal document record: %w", err)
+		return fmt.Errorf("Can't marshal record: %w", err)
 	}
 
-	if err := store.StoreDocumentRecord(ctx, docBytes, doc.Hash); err != nil {
-		log.Printf("[Parser] failed storing document record: %v", err)
-	}
+	msg := streams.NewMsg(recordBytes, StreamName)
+
+	parseStream.AddMsg(msg, StreamName)
 
 	nextDepth := currentMeta.Depth + 1
 

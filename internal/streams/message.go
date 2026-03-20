@@ -1,15 +1,36 @@
 package streams
 
 import (
+	"encoding/json"
+	"fmt"
 	"time"
 
-	"github.com/KingrogKDR/Dev-Search/internal/indexer"
+	"github.com/google/uuid"
+)
+
+type MsgStatus string
+
+const (
+	READY      = "ready"
+	PROCESSING = "processing"
+	DONE       = "done"
+	FAILED     = "failed"
 )
 
 type Msg struct {
-	ID            string
-	Record        *indexer.Record
-	Status        string
-	AddedAt       time.Time
-	LastFetchedAt time.Time
+	ID            string          `json:"id"`
+	StreamID      string          `json:"stream_id"`
+	Payload       json.RawMessage `json:"payload"`
+	Status        MsgStatus       `json:"status"`
+	AddedAt       time.Time       `json:"added_at"`
+	LastFetchedAt time.Time       `json:"last_fetched_at"`
+}
+
+func NewMsg(payload []byte, streamer string) *Msg {
+	msgId := fmt.Sprintf("%s-stream-%s", streamer, uuid.New().String())
+	return &Msg{
+		ID:      msgId,
+		Payload: payload,
+		Status:  READY,
+	}
 }

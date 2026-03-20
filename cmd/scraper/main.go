@@ -15,6 +15,7 @@ import (
 	"github.com/KingrogKDR/Dev-Search/internal/scraper/stats"
 	"github.com/KingrogKDR/Dev-Search/internal/scraper/worker"
 	"github.com/KingrogKDR/Dev-Search/internal/storage"
+	"github.com/KingrogKDR/Dev-Search/internal/streams"
 )
 
 var priorityQueues = []string{
@@ -43,6 +44,7 @@ func main() {
 	rdb := storage.GetRedisClient()
 	frontier := queues.NewQueue(rdb, "frontier")
 	parseQ := queues.NewQueue(rdb, "parser")
+	parserStream := streams.NewMsgStream(rdb, "parser", "indexer")
 
 	simIndex := deduplication.NewSimIndex()
 
@@ -82,7 +84,7 @@ func main() {
 	}
 
 	parseExec := func(ctx context.Context, job *queues.Job) error {
-		return parsing.ExtractTextAndStore(ctx, job, store, frontier)
+		return parsing.ExtractTextAndStore(ctx, job, store, frontier, parserStream)
 	}
 
 	crawlerWorker := worker.NewWorker(crawler.UserAgent, frontier, priorityQueues, 8, crawlExec)
