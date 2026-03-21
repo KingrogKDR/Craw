@@ -11,6 +11,10 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+const (
+	MAX_RETRIES = 5
+)
+
 type MsgStream struct {
 	namespace string
 	client    *redis.Client
@@ -28,14 +32,13 @@ func NewMsgStream(client *redis.Client, namespace string, consumerGroup string) 
 	groupName := fmt.Sprintf("%s-group", consumerGroup)
 	err := ms.client.XGroupCreateMkStream(ms.ctx, streamName, groupName, "$").Err()
 	if err != nil && !strings.Contains(err.Error(), "BUSYGROUP") {
-		log.Println(fmt.Errorf("failed to create consumer group: %w", err))
+		panic(fmt.Errorf("failed to create consumer group: %w", err))
 	}
 
 	return ms
 }
 
 func (ms *MsgStream) AddMsg(msg *Msg, streamName string) error {
-	msg.Status = PROCESSING
 	msg.AddedAt = time.Now()
 
 	msgJson, err := json.Marshal(msg)
@@ -138,4 +141,42 @@ func (ms *MsgStream) GetMsg(consumer string, streamName string, groupName string
 	}
 
 	return result, nil
+}
+
+func (ms *MsgStream) CompleteMessage(msg *Msg, success bool, streamName string, groupName string) error {
+	if err := ms.client.XAck(ms.ctx, streamName, groupName, msg.StreamID).Err(); err != nil {
+		return fmt.Errorf("failed to XACK message %s: %w", msg.StreamID, err)
+	}
+	if !success {
+		msg.RetryCount++
+
+		if msg.RetryCount <= MAX_RETRIES {
+			data, err := json.Marshal(msg)
+			if err != nil {
+				return fmt.Errorf("failed to marshal retry msg: %w", err)
+			}
+
+			err = ms.client.XAdd(ms.ctx, &redis.XAddArgs{
+				Stream: streamName,
+				Values: map[string]interface{}{
+					"data": data,
+				},
+			}).Err()
+			if err != nil {
+				return fmt.Errorf("failed to requeue message: %w", err)
+			}
+
+			return nil
+		}
+
+		msg.Status = DEAD
+		log.Printf("Message %s is dead!", msg.ID)
+		return nil
+	}
+
+	msg.Status = DONE
+	log.Printf("Message %s successfully processed!", msg.ID)
+
+	return nil
+
 }

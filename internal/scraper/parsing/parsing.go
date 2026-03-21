@@ -29,6 +29,7 @@ type ParsePayload struct {
 }
 type ParsedPage struct {
 	Text          string
+	Title         string
 	Links         []string
 	HasCodeBlocks bool
 }
@@ -96,8 +97,9 @@ func ExtractTextAndStore(ctx context.Context, job *queues.Job, store *storage.Mi
 		queues.ClassifyURL(parsed, currentMeta)
 	}
 	currentMeta.HasCodeBlocks = parsedPage.HasCodeBlocks
+	snippet := generateSnippet(parsedPage.Text)
 
-	record := indexer.NewRecord(payload.Hash, job.URL, parsedPage.Text, currentMeta.InboundLinks)
+	record := indexer.NewRecord(payload.Hash, job.URL, parsedPage.Title, snippet, payload.ObjectKey, currentMeta.InboundLinks)
 
 	recordBytes, err := json.Marshal(record)
 	if err != nil {
@@ -215,7 +217,12 @@ func extractHtml(rawHtml string, baseUrl *url.URL) (*ParsedPage, error) {
 		return nil, err
 	}
 
-	parsedPage.Text = mainText
+	parsedPage.Title = article.Title
+	if parsedPage.Title == "" {
+		doc, _ := goquery.NewDocumentFromReader(strings.NewReader(rawHtml))
+		parsedPage.Title = strings.TrimSpace(doc.Find("title").Text())
+	}
+	parsedPage.Text = strings.TrimSpace(mainText)
 	parsedPage.Links = links
 
 	return parsedPage, nil
@@ -254,6 +261,9 @@ func extractMd(rawMd string, baseUrl *url.URL) (*ParsedPage, error) {
 			}
 
 			title := strings.TrimSpace(headingText.String())
+			if node.Level == 1 && parsedPage.Title == "" {
+				parsedPage.Title = title
+			}
 			lower := strings.ToLower(title)
 
 			if lower == "license" ||
@@ -358,6 +368,26 @@ func extractMd(rawMd string, baseUrl *url.URL) (*ParsedPage, error) {
 	parsedPage.Links = urls
 
 	return parsedPage, nil
+}
+
+func generateSnippet(text string) string {
+	const maxLen = 200
+
+	text = strings.TrimSpace(text)
+	text = strings.ReplaceAll(text, "\n", " ")
+
+	if len(text) <= maxLen {
+		return text
+	}
+
+	// cut at word boundary
+	snippet := text[:maxLen]
+	lastSpace := strings.LastIndex(snippet, " ")
+	if lastSpace > 0 {
+		snippet = snippet[:lastSpace]
+	}
+
+	return snippet + "..."
 }
 
 func extractLinks(rawHtml string, baseUrl *url.URL) ([]string, error) {

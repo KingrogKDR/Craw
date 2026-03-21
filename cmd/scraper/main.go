@@ -38,8 +38,6 @@ var seedUrls = []string{
 	"https://github.com/public-apis/public-apis",
 }
 
-var Store *storage.MinioStore
-
 func main() {
 	rdb := storage.GetRedisClient()
 	frontier := queues.NewQueue(rdb, "frontier")

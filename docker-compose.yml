@@ -4,6 +4,19 @@ services:
     ports:
       - "6379:6379"
 
+  postgres:
+    image: postgres:16
+    container_name: devsearch-postgres
+    environment:
+      POSTGRES_USER: dev
+      POSTGRES_PASSWORD: dev
+      POSTGRES_DB: devsearch
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
   aistor-server:
     image: quay.io/minio/aistor/minio:latest
     container_name: aistor-server
@@ -16,3 +29,6 @@ services:
       - ${HOME}/minio/minio.license:/minio.license
       - ${HOME}/minio/certs:/etc/minio/certs
     restart: unless-stopped
+
+volumes:
+  pgdata:

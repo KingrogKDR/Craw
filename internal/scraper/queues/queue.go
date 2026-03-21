@@ -134,13 +134,14 @@ func (q *Queue) CompleteJob(job *Job, result *Result, workerID string) error {
 	pipe.Set(q.ctx, resultKey, resultData, 24*time.Hour)
 
 	if !result.Success {
+		job.RetryCount++
+
 		if job.RetryCount >= MAX_RETRIES {
 			job.Status = JOB_DEAD
 			jobData, _ := json.Marshal(job)
 			failedKey := fmt.Sprintf(FailedKey, q.namespace)
 			pipe.LPush(q.ctx, failedKey, jobData)
 		} else {
-			job.RetryCount++
 
 			job.BaseScore -= max(10, job.RetryCount*10)
 

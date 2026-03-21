@@ -15,11 +15,13 @@ const (
 	PROCESSING = "processing"
 	DONE       = "done"
 	FAILED     = "failed"
+	DEAD       = "dead"
 )
 
 type Msg struct {
 	ID            string          `json:"id"`
 	StreamID      string          `json:"stream_id"`
+	RetryCount    int             `json:"retry_count"`
 	Payload       json.RawMessage `json:"payload"`
 	Status        MsgStatus       `json:"status"`
 	AddedAt       time.Time       `json:"added_at"`
@@ -29,8 +31,9 @@ type Msg struct {
 func NewMsg(payload []byte, streamer string) *Msg {
 	msgId := fmt.Sprintf("%s-stream-%s", streamer, uuid.New().String())
 	return &Msg{
-		ID:      msgId,
-		Payload: payload,
-		Status:  READY,
+		ID:         msgId,
+		RetryCount: 0,
+		Payload:    payload,
+		Status:     READY,
 	}
 }

@@ -74,9 +74,6 @@ func (w *Worker) Start() {
 		go w.processTasks()
 	}
 
-	w.wg.Add(1)
-	go w.healthCheck()
-
 	log.Printf("Worker %s started successfully", w.ID)
 
 }
@@ -96,20 +93,19 @@ func (w *Worker) processTasks() {
 		case <-w.ctx.Done():
 			return
 		default:
-			job, err := w.queue.Dequeue(w.queues, w.ID, 5*time.Second)
-			if err != nil {
-				log.Printf("Worker %s: Error dequeuing job: %v", w.ID, err)
-				time.Sleep(time.Second)
-				continue
-
-			}
-
-			if job == nil {
-				continue
-			}
-
-			w.processTask(job)
 		}
+		job, err := w.queue.Dequeue(w.queues, w.ID, 5*time.Second)
+		if err != nil {
+			log.Printf("Worker %s: Error dequeuing job: %v", w.ID, err)
+			time.Sleep(time.Second)
+			continue
+		}
+
+		if job == nil {
+			continue
+		}
+
+		w.processTask(job)
 	}
 
 }
@@ -193,30 +189,5 @@ func (w *Worker) completeTask(job *queues.Job, success bool, retryLater bool, er
 
 	if err := w.queue.CompleteJob(job, result, w.ID); err != nil {
 		log.Printf("Worker %s: Error completing task %s: %v", w.ID, job.ID, err)
-	}
-}
-
-func (w *Worker) healthCheck() {
-	defer w.wg.Done()
-
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-w.ctx.Done():
-			return
-		case <-ticker.C:
-			key := fmt.Sprintf("taskqueue:workers:%s", w.ID)
-			heartbeat := map[string]interface{}{
-				"id":        w.ID,
-				"queues":    w.queues,
-				"last_seen": time.Now().Unix(),
-				"status":    "active",
-			}
-
-			w.queue.Redis.HSet(w.ctx, key, heartbeat)
-			w.queue.Redis.Expire(w.ctx, key, 2*time.Minute)
-		}
 	}
 }
