@@ -30,12 +30,17 @@ func NewMsgStream(client *redis.Client, namespace string, consumerGroup string) 
 
 	streamName := fmt.Sprintf("%s-events", namespace)
 	groupName := fmt.Sprintf("%s-group", consumerGroup)
+
+	ms.ensureGroup(streamName, groupName)
+
+	return ms
+}
+
+func (ms *MsgStream) ensureGroup(streamName, groupName string) {
 	err := ms.client.XGroupCreateMkStream(ms.ctx, streamName, groupName, "$").Err()
 	if err != nil && !strings.Contains(err.Error(), "BUSYGROUP") {
 		panic(fmt.Errorf("failed to create consumer group: %w", err))
 	}
-
-	return ms
 }
 
 func (ms *MsgStream) AddMsg(msg *Msg, streamName string) error {

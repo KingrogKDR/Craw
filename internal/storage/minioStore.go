@@ -83,25 +83,6 @@ func (m *MinioStore) StoreTextData(ctx context.Context, text string, hash uint64
 	return err
 }
 
-func (m *MinioStore) StoreDocumentRecord(ctx context.Context, docData []byte, docHash uint64) error {
-
-	objectKey := fmt.Sprintf("docs/%d.json", docHash)
-
-	reader := bytes.NewReader(docData)
-
-	_, err := m.Client.PutObject(
-		ctx,
-		m.Bucket,
-		objectKey,
-		reader,
-		int64(len(docData)),
-		minio.PutObjectOptions{
-			ContentType: "application/json",
-		},
-	)
-	return err
-}
-
 func (m *MinioStore) GetObject(ctx context.Context, objectName string) ([]byte, error) {
 
 	obj, err := m.Client.GetObject(ctx, m.Bucket, objectName, minio.GetObjectOptions{})

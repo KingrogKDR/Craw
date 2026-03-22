@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/KingrogKDR/Dev-Search/internal/indexer"
 	"github.com/KingrogKDR/Dev-Search/internal/streams"
 	"github.com/google/uuid"
 )
@@ -107,22 +108,33 @@ func (w *Worker) processMessage(message *streams.Msg) {
 	}
 
 	duration := time.Since(start)
+	indexer.AddIndexLatency(duration)
 
 	success := err == nil
 
 	errMsg := err.Error()
 
 	w.completeMsgProcessing(message, success, errMsg, duration)
+	indexer.IncrementProcessed()
 
 }
 
 func (w *Worker) completeMsgProcessing(msg *streams.Msg, success bool, errMsg string, duration time.Duration) {
 	if success {
+		indexer.IncrementSuccess()
 		log.Printf("Worker %s: Finished processing message %s in %v success=%v", w.ID, msg.ID, duration, success)
 	} else {
+		indexer.IncrementFailure()
+		if msg.RetryCount > 0 {
+			indexer.IncrementRetry()
+		}
+
 		log.Printf("Worker %s: Processing msg %s failed: %s (attempt %d/%d)",
 			w.ID, msg.ID, errMsg, msg.RetryCount+1, streams.MAX_RETRIES+1)
 	}
+
+	queueLag := time.Since(msg.AddedAt)
+	log.Printf("Worker %s: Queue lag for msg %s: %v", w.ID, msg.ID, queueLag)
 
 	if err := w.stream.CompleteMessage(msg, success, StreamName, GroupName); err != nil {
 		log.Printf("Worker %s: Error completing message processing %s: %v", w.ID, msg.ID, err)

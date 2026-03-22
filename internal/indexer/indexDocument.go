@@ -57,9 +57,9 @@ func NewDocument(record *Record) *Document {
 }
 
 func (d *Document) BuildIndex(text string, recordId uint64) {
-	words := strings.Fields(text)
+	words := strings.FieldsSeq(text)
 
-	for _, word := range words {
+	for word := range words {
 		word = strings.ToLower(word)
 
 		if _, exists := stopwords[word]; exists {

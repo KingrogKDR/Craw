@@ -39,6 +39,7 @@ var seedUrls = []string{
 }
 
 func main() {
+	defer stats.FinalReport()
 	rdb := storage.GetRedisClient()
 	frontier := queues.NewQueue(rdb, "frontier")
 	parseQ := queues.NewQueue(rdb, "parser")
@@ -121,5 +122,4 @@ func main() {
 	parserWorker.Stop()
 	crawlerWorker.Stop()
 
-	stats.FinalReport()
 }
