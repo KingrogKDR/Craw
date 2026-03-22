@@ -1,13 +1,13 @@
-CREATE TABLE inverted_index (
+CREATE TABLE IF NOT EXISTS inverted_index (
     term TEXT,
     content_hash BIGINT,
 
     PRIMARY KEY (term, content_hash)
 );
 
-CREATE INDEX idx_term ON inverted_index(term);
+CREATE INDEX IF NOT EXISTS idx_term ON inverted_index(term);
 
-CREATE TABLE documents (
+CREATE TABLE IF NOT EXISTS documents (
     content_hash BIGINT PRIMARY KEY,
     url TEXT,
     title TEXT,

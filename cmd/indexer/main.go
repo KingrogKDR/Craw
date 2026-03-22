@@ -16,6 +16,12 @@ import (
 
 func main() {
 	db.InitDB()
+
+	log.Println("Running DB migrations...")
+	if err := db.RunMigrations(); err != nil {
+		log.Fatalf("Migration failed: %v", err)
+	}
+
 	defer indexer.FinalReport()
 	rdb := storage.GetRedisClient()
 	parserStream := streams.NewMsgStream(rdb, "parser", "indexer")
