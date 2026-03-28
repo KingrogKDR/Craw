@@ -204,7 +204,7 @@ I first tried using channels but handling concurrency along with performance pro
 
 I initially thought of using hashing for deduplication. It worked for urls after they were normalised, but not for content. This is because a slight change in content can result in a completely different hash. Since content in websites are impacted by ads, cookies and other forms of dynamic content, this can lead to a lot of false negatives.  
 
-Therefore, I used simhashing for content-deduplication. It implemented near-duplication detection using Hamming Distance against a threshold. I have reference a Google research paper on Simhash for implementing it.
+Therefore, I used simhashing for content-deduplication. It implemented near-duplication detection using Hamming Distance against a threshold. I have referenced a Google research paper on Simhash for implementing it.
 
 Reference: https://lnkd.in/gGr-3uF4]](https://static.googleusercontent.com/media/research.google.com/en//pubs/archive/33026.pdf)
 
