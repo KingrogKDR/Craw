@@ -81,7 +81,7 @@ Crawler design:
 ![crawler system design](screenshots/crawler-design.png)
 
 
-## 🔧 Core Components
+## 🔧 Core-Components
 
 ### 1. URL Frontier (Scheduler)
 
@@ -185,7 +185,7 @@ Crawler metrics:
 ---
 
 
-## 🔍 Key Design Decisions
+## 🔍 Key-Design-Decisions
 
 
 ### Why Single Machine?
@@ -208,7 +208,7 @@ Therefore, I used simhashing for content-deduplication. It implemented near-dupl
 
 Reference: https://lnkd.in/gGr-3uF4]](https://static.googleusercontent.com/media/research.google.com/en//pubs/archive/33026.pdf)
 
-## Challenges Faced
+## Challenges-Faced
 
 * Handling duplicate for content
 * Avoiding crawler traps (infinite URL spaces)
@@ -218,7 +218,7 @@ Reference: https://lnkd.in/gGr-3uF4]](https://static.googleusercontent.com/media
 * Error handling and preventing error inflation
 
 
-## Getting Started
+## Getting-Started
 
 ```bash
 git clone https://github.com/KingrogKDR/Craw
