@@ -71,7 +71,7 @@ Basic Flow:
                 +-------------------+
 ```
 
-Crawler design:
+Complete design:
 
 ![crawler system design](screenshots/crawler-design.png)
 
