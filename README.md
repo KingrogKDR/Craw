@@ -52,22 +52,17 @@ Basic Flow:
                          |
                          v
                 +-------------------+
-                |   URL Frontier    |  (Queue / Scheduler)
+                |   URL Frontier    | 
                 +--------+----------+
                          |
                          v
                 +-------------------+
-                |   Fetch Workers   |  (Concurrent Goroutines)
+                |  Crawler Workers  |  
                 +--------+----------+
                          |
                          v
                 +-------------------+
-                |   Parser          |
-                +--------+----------+
-                         |
-                         v
-                +-------------------+
-                | URL Deduplicator  |
+                |  Parser Workers  |
                 +--------+----------+
                          |
                          v
