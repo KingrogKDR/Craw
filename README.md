@@ -10,11 +10,11 @@ future expansion into a search-engine.
 
 - [Overview](#Overview)
 - [Architecture](#Architecture)
-- [Core Components](#Core_Components)
-- [Performance](#Performance_&_Stats)
-- [Design Decisions](#Key_Design_Decisions)
-- [Challenges Faced](#Challenges_Faced)
-- [Getting Started](#Getting_Started)
+- [Core Components](#Core Components)
+- [Performance](#Performance & Stats)
+- [Design Decisions](#Key Design Decisions)
+- [Challenges Faced](#Challenges Faced)
+- [Getting Started](#Getting Started)
 - [Learnings](#Learnings)
 
 
