@@ -182,7 +182,7 @@ Crawler metrics:
 ---
 
 
-## 🔍 Key Design Decisions
+## Key Design Decisions
 
 
 ### Why Single Machine?
