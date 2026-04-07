@@ -1,6 +1,6 @@
 # A Developer-Focused Web Crawler from Scratch (Single-Node Architecture in Go)
 
-A developer focused crawler mainly for documentation and github search.
+A Go-based crawler that turns the web’s scattered developer knowledge into structured, discoverable data.
 
 Docs and some github repos are a goldmine of learning and information. Many developers stay unaware of them or find them hard to discover.  Craw solves this problem.
 
