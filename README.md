@@ -230,5 +230,3 @@ go run .cmd/indexer # for running the indexer
 * Concurrency bottlenecks, race conditions and context handling
 * Performance and reliability tradeoffs
 * Simple systems scale surprisingly far when designed well
-
-Will craft my learnings in blogs soon.
