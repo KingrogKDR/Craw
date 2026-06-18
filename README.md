@@ -195,7 +195,7 @@ I mainly preferred Go for its easy-to-use concurrency features which can be opti
 
 ### Why Redis Queues?
 
-I first tried using channels but handling concurrency along with performance proved to be a serious bottleneck. Redis solved this with reliable atomic operations and queue primitives. Since it is highly configurable, it allowed me to keep my system design intact while smoothening concurrency burden. 
+I first tried using channels but handling concurrency along with performance proved to be a serious bottleneck. I also had difficulty customizing it with the visibility timer and the scoring and aging algorithms to prioritize the jobs. Redis solved this with reliable atomic operations and queue primitives. Since it is highly configurable, it allowed me to keep my system design intact while smoothening concurrency burden. 
 
 ### Deduplication Strategy
 
