@@ -30,7 +30,6 @@ const (
 )
 
 const MAX_RETRIES = 5
-const DEFAULT_RETRY_DELAY = 10 * time.Second
 
 type Job struct {
 	ID              string          `json:"id"`
