@@ -1,4 +1,4 @@
-# A Developer-Focused Web Crawler from Scratch (Single-Node Architecture in Go)
+# A Developer-Focused Web Crawler from Scratch
 
 A Go-based crawler that turns the web’s scattered developer knowledge into structured, discoverable data.
 
@@ -29,8 +29,6 @@ This project is a **custom-built web crawler** that:
 * Avoids duplicate crawling using deduplication strategies
 * Respects crawl constraints (depth, domain, rate limits)
 * Stores crawl data efficiently for analysis
-
-The system is intentionally built on a **single-node architecture** to explore performance limits, system design trade-offs, and concurrency patterns in Go.
 
 ## Architecture
 
@@ -183,11 +181,6 @@ Crawler metrics:
 
 
 ## Key Design Decisions
-
-
-### Why Single Machine?
-
-I wanted to do this on a single machine for easier debugging, efficient resource usage and lower operational complexity. It helped me care more about learning and implementing the internals of a crawler which was my main goal, instead of focusing too much on distributed complexity.
 
 ### Why Go?
 
